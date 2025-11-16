@@ -1,0 +1,174 @@
+---
+title: "BIOSTAT 721 — Project 2"
+author: "Jiaqi Wang"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  word_document:
+    fig_width: 8
+    fig_height: 5
+    number_sections: true
+---
+## Setting
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,    
+  message = FALSE,  
+  warning = FALSE  
+)
+
+library(tidyverse)
+library(lubridate)
+library(janitor)
+```
+
+## Data cleaning
+```{r}
+clean_aq <- function(df) {
+  df_clean <- df %>%
+    # Clean column names to snake_case
+    janitor::clean_names() %>%
+    
+    # Rename relevant pollutant columns
+    rename(
+      date = date,
+      co = daily_max_8_hour_co_concentration,
+      pm25 = daily_mean_pm2_5_concentration,
+      o3 = daily_max_8_hour_ozone_concentration
+    ) %>%
+    
+    # Convert date to Date format
+    mutate(date = lubridate::mdy(date)) %>%
+    
+    # Drop rows with invalid or missing date
+    filter(!is.na(date)) %>%
+    
+    # Remove rows with NA in co, pm25, or o3
+    filter(!is.na(co), !is.na(pm25), !is.na(o3)) %>%
+    
+    # Remove negative values
+    mutate(
+      co = ifelse(co < 0, 0, co),
+      pm25 = ifelse(pm25 < 0, 0, pm25),
+      o3 = ifelse(o3 < 0, 0, o3)
+    ) %>%
+    
+    # Add year and month columns
+    mutate(
+      year = lubridate::year(date),
+      month = lubridate::month(date)
+    )
+  
+  return(df_clean)
+}
+
+```
+
+## Data importing
+```{r}
+aq18 <- read_csv("data/AQ_2018.csv", show_col_types = FALSE)
+aq19 <- read_csv("data/AQ_2019.csv", show_col_types = FALSE)
+aq20 <- read_csv("data/AQ_2020.csv", show_col_types = FALSE)
+
+clean18 <- clean_aq(aq18) %>% mutate(year = 2018)
+clean19 <- clean_aq(aq19) %>% mutate(year = 2019)
+clean20 <- clean_aq(aq20) %>% mutate(year = 2020)
+
+aq_all <- bind_rows(clean18, clean19, clean20) %>%
+  mutate(year = as.factor(year))
+
+```
+
+## Check cleaning status
+```{r}
+check_cleaning <- function(df) {
+  cat("Check for missing values:\n")
+  print(colSums(is.na(df)))
+  
+  cat("\nCheck variable types:\n")
+  print(sapply(df, class))
+  
+  cat("\nCheck summary statistics (only for numeric columns):\n")
+  numeric_cols <- sapply(df, is.numeric)
+  print(summary(df[, numeric_cols]))
+}
+check_cleaning(aq_all)
+```
+
+## Plot 1.
+```{r}
+# data preparation
+pollutants_monthly <- aq_all %>%
+  group_by(month, pollutant = "co") %>%
+  summarise(mean = mean(co, na.rm = TRUE),
+            se = sd(co, na.rm = TRUE) / sqrt(n()), .groups = "drop") %>%
+  bind_rows(
+    aq_all %>%
+      group_by(month, pollutant = "o3") %>%
+      summarise(mean = mean(o3, na.rm = TRUE),
+                se = sd(o3, na.rm = TRUE) / sqrt(n()), .groups = "drop")
+  )
+
+# plot
+ggplot(pollutants_monthly, aes(x = month, y = mean, color = pollutant)) +
+  geom_line(linewidth = 1.1) +
+  geom_point(size = 2.5) +
+  geom_errorbar(aes(ymin = mean - 1.96 * se, ymax = mean + 1.96 * se),
+                width = 0.2) +
+  scale_x_continuous(breaks = 1:12, labels = month.abb) +
+  labs(
+    title = "Monthly Mean CO and O3 Concentrations (Averaged Over 3 Years)",
+    x = "Month", y = "Concentration (ppm / ppm)",
+    color = "Pollutant"
+  ) +
+  theme_minimal(base_size = 14)
+
+```
+
+## Plot 2.
+```{r}
+# Monthly PM2.5 averages grouped by year and month
+pm_monthly <- aq_all %>%
+  group_by(year, month) %>%
+  summarise(pm25_mean = mean(pm25, na.rm = TRUE), .groups = "drop")
+
+# Plot 2: Monthly PM2.5 trends with scatter distribution and smoothed lines
+ggplot() +
+  # Daily scatter points (faded for readability)
+  geom_point(
+    data = aq_all,
+    aes(x = month, y = pm25, color = year),
+    alpha = 0.3, size = 1.5
+  ) +
+
+  # Smoothed trend line to highlight monthly patterns
+  geom_smooth(
+    data = aq_all,
+    aes(x = month, y = pm25, color = year),
+    method = "loess", se = FALSE, linewidth = 1.3
+  ) +
+
+  # Mean points per month
+  geom_point(
+    data = pm_monthly,
+    aes(x = month, y = pm25_mean, color = year),
+    shape = 21, fill = "white", size = 3, stroke = 1
+  ) +
+
+  # Customize x-axis and labels
+  scale_x_continuous(breaks = 1:12, labels = month.abb) +
+  labs(
+    title = "Monthly PM2.5 Trends with Scatter and Smoothed Lines",
+    x = "Month",
+    y = "PM2.5 Concentration (µg/m³)",
+    color = "Year"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    legend.position = "right"
+  )
+
+```
+
+# Link to the project github
+https://github.com/ashleyw57/BIOSTAT721-Project2
